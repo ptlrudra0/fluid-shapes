@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fluid Shapes</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0b1b21; color: #ead9b8;
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column; align-items: center; min-height: 100vh;
+  }
+  header { padding: 18px 20px 6px; text-align: center; }
+  h1 { font-size: 1.05rem; font-weight: 600; margin: 0; letter-spacing: 0.04em; }
+  header p { font-size: 0.78rem; color: #7e95a0; margin: 4px 0 0; }
+  #stage { width: min(88vw, 400px); margin: 14px 0 6px; }
+  canvas { width: 100%; display: block; border-radius: 14px; }
+  #controls { width: min(88vw, 400px); padding: 6px 0 40px; }
+  details { border-top: 1px solid #1d333d; }
+  summary {
+    cursor: pointer; padding: 10px 2px; font-size: 0.82rem; letter-spacing: 0.06em;
+    text-transform: uppercase; color: #b9c9c2; list-style: none;
+  }
+  summary::after { content: "+"; float: right; color: #c75b39; }
+  details[open] summary::after { content: "–"; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 2px; }
+  label { font-size: 0.85rem; color: #d8e2da; }
+  output { font-size: 0.75rem; color: #7e95a0; min-width: 38px; text-align: right; }
+  input[type=range] { flex: 1; accent-color: #c75b39; }
+  input[type=color] { width: 40px; height: 26px; border: none; background: none; padding: 0; cursor: pointer; }
+  .actions { display: flex; gap: 10px; margin-top: 14px; }
+  button {
+    background: #c75b39; color: #0b1b21; border: none; border-radius: 8px;
+    padding: 10px 14px; font: inherit; font-size: 0.85rem; font-weight: 600; cursor: pointer; flex: 1;
+  }
+  button.secondary { background: #16303a; color: #ead9b8; }
+  button:active { transform: scale(0.98); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Fluid Shapes</h1>
+  <p>bounce &middot; morph &middot; burst &mdash; live, tune it below</p>
+</header>
+<div id="stage"><canvas id="cv" width="540" height="960"></canvas></div>
+<div id="controls">
+  <details open>
+    <summary>Playback</summary>
+    <div class="row"><label for="speed">Speed</label><input id="speed" type="range" min="0.25" max="2" step="0.05"><output id="speed_v"></output></div>
+    <div class="row"><label for="loop">Loop</label><input id="loop" type="checkbox" checked></div>
+  </details>
+  <details>
+    <summary>Ball</summary>
+    <div class="row"><label for="ball_radius">Size</label><input id="ball_radius" type="range" min="50" max="180" step="2"><output id="ball_radius_v"></output></div>
+    <div class="row"><label for="gravity">Gravity</label><input id="gravity" type="range" min="2000" max="9000" step="100"><output id="gravity_v"></output></div>
+    <div class="row"><label for="restitution">Bounciness</label><input id="restitution" type="range" min="0.3" max="0.85" step="0.01"><output id="restitution_v"></output></div>
+  </details>
+  <details>
+    <summary>Morph</summary>
+    <div class="row"><label for="morph_len">Morph length</label><input id="morph_len" type="range" min="0.4" max="2" step="0.05"><output id="morph_len_v"></output></div>
+    <div class="row"><label for="spin">Spin</label><input id="spin" type="range" min="0" max="1" step="0.05"><output id="spin_v"></output></div>
+  </details>
+  <details>
+    <summary>Dots</summary>
+    <div class="row"><label for="dot_count">Count</label><input id="dot_count" type="range" min="8" max="40" step="1"><output id="dot_count_v"></output></div>
+    <div class="row"><label for="orbit_radius">Orbit size</label><input id="orbit_radius" type="range" min="180" max="480" step="5"><output id="orbit_radius_v"></output></div>
+  </details>
+  <details>
+    <summary>Colours</summary>
+    <div class="row"><label for="background">Background</label><input id="background" type="color"></div>
+    <div class="row"><label for="color_start">Start</label><input id="color_start" type="color"></div>
+    <div class="row"><label for="color_end">End</label><input id="color_end" type="color"></div>
+  </details>
+  <div class="actions">
+    <button id="replay">Replay</button>
+    <button id="reset" class="secondary">Reset defaults</button>
+    <button id="download" class="secondary">Download settings</button>
+  </div>
+</div>
+<script>
+"use strict";
+const DEFAULTS = {
+  width: 1080, height: 1920, fps: 60, duration: 9.0,
+  background: "#12262E", color_start: "#C75B39", color_end: "#EAD9B8",
+  ball_radius: 110, floor_y: 1380, center_y: 880,
+  gravity: 5200, restitution: 0.62,
+  dot_count: 22, dot_radius: 26, orbit_radius: 330,
+  fade_in: 0.35, bounce_end: 2.35,
+  rise: [2.35, 3.05], morph1: [3.15, 4.15], morph2: [4.40, 5.40],
+  burst: [5.45, 6.05], wave: [6.05, 8.00], gather: [8.00, 8.60],
+  fade_out: [8.60, 9.00],
+  speed: 1.0, morph_len: 1.0, spin: 0.30, loop: true
+};
+let S = structuredClone(DEFAULTS);
+
+// ---------- easing ----------
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const seg = (t, a, b) => clamp01((t - a) / (b - a));
+const eoc = t => 1 - Math.pow(1 - t, 3);
+const eic = t => t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2;
+const eob = (t, k=1.9) => 1 + (k+1)*Math.pow(t-1,3) + k*Math.pow(t-1,2);
+const lerp = (a, b, t) => a + (b-a)*t;
+const hx = c => { c = c.replace("#",""); return [0,2,4].map(i => parseInt(c.slice(i,i+2),16)); };
+const mix3 = (a, b, t) => [0,1,2].map(i => Math.round(lerp(a[i], b[i], t)));
+const css = c => `rgb(${c[0]},${c[1]},${c[2]})`;
+
+// ---------- outlines ----------
+const M = 240;
+const ANG = Array.from({length: M}, (_, i) => 2*Math.PI*i/M);
+function smooth(r, k) {
+  const ker = []; let sum = 0;
+  for (let i = 0; i < 2*k+1; i++) { const v = 0.5*(1-Math.cos(2*Math.PI*i/(2*k))); ker.push(v); sum += v; }
+  const out = new Array(M);
+  for (let i = 0; i < M; i++) {
+    let acc = 0;
+    for (let j = 0; j < ker.length; j++) acc += r[(i - k + j + M) % M] * ker[j];
+    out[i] = acc / sum;
+  }
+  return out;
+}
+const RC = new Array(M).fill(1);
+const RS = smooth(ANG.map(th => {
+  const c = Math.abs(Math.cos(th)), s = Math.abs(Math.sin(th));
+  return Math.min(1/Math.max(Math.max(c, s), 1e-6), 1.42);
+}), 9);
+const RT = smooth(ANG.map(th => {
+  const a = ((th - Math.PI/2) % (2*Math.PI/3) + 2*Math.PI/3) % (2*Math.PI/3) - Math.PI/3;
+  return Math.min(0.62/Math.max(Math.cos(a), 0.35), 1.30);
+}), 13);
+function morphR(m) {
+  const out = new Array(M);
+  if (m <= 1) { const t = clamp01(m); for (let i=0;i<M;i++) out[i] = RC[i]*(1-t) + RS[i]*t; }
+  else { const t = clamp01(m-1); for (let i=0;i<M;i++) out[i] = RS[i]*(1-t) + RT[i]*t; }
+  return out;
+}
+
+// ---------- bounce sim ----------
+let bounceSim = null, impactTimes = [];
+function simulateBounce() {
+  const dt = 1/240, pts = [];
+  let y = 240, vy = 0, t = 0; impactTimes = [];
+  while (t <= S.duration + 0.1) {
+    pts.push([t, y, vy]);
+    vy += S.gravity * dt; y += vy * dt;
+    if (y > S.floor_y - S.ball_radius && vy > 0) {
+      y = S.floor_y - S.ball_radius; impactTimes.push(t);
+      vy = -vy * S.restitution;
+      if (Math.abs(vy) < 260) vy = 0;
+    }
+    t += dt;
+  }
+  bounceSim = pts;
+}
+function bounceAt(tt) {
+  if (tt < 0.22) return [240, 0];
+  const p = bounceSim;
+  for (let k = 0; k < p.length - 1; k++) {
+    if (p[k][0] <= tt && tt <= p[k+1][0]) {
+      const f = (tt - p[k][0]) / (p[k+1][0] - p[k][0] || 1);
+      return [lerp(p[k][1], p[k+1][1], f), lerp(p[k][2], p[k+1][2], f)];
+    }
+  }
+  return [S.floor_y - S.ball_radius, 0];
+}
+
+// morph timings, scaled by the morph-length control
+function morphWindows() {
+  const k = S.morph_len;
+  const b1a = S.rise[1] + 0.10;
+  const b1b = b1a + 1.00 * k;
+  const b2a = b1b + 0.25 * k;
+  const b2b = b2a + 1.00 * k;
+  const ba = b2b + 0.05;
+  return { b1a, b1b, b2a, b2b, ba, bb: ba + 0.60, wa: ba + 0.60, wb: S.wave[1], ga: S.gather[0], gb: S.gather[1] };
+}
+
+// ---------- render ----------
+const cv = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+const SC = 0.5; // canvas is 540x960, animation space 1080x1920
+function drawBlob(cx, cy, rad, rot, m, color, sx, sy) {
+  const r = morphR(m);
+  ctx.beginPath();
+  for (let i = 0; i < M; i++) {
+    const x = cx + r[i]*rad*Math.cos(ANG[i]+rot)*sx;
+    const y = cy + r[i]*rad*Math.sin(ANG[i]+rot)*sy;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+function life(t, ra) {
+  return [-S.spin * (t - ra), 14*Math.sin(2*Math.PI*0.45*(t-ra)), 1 + 0.022*Math.sin(2*Math.PI*1.05*t)];
+}
+function pulse(t, t0) {
+  const d = t - t0;
+  if (d >= 0 && d < 0.35) { const p = Math.sin(Math.PI*d/0.35); return [1+0.055*p, 1-0.045*p]; }
+  return [1, 1];
+}
+function draw(t) {
+  const W = S.width, H = S.height;
+  const bg = hx(S.background);
+  ctx.fillStyle = css(bg);
+  ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.save();
+  ctx.scale(SC, SC);
+  const col = css(mix3(hx(S.color_start), hx(S.color_end), clamp01((t-2.2)/4.6)));
+  const cx = W/2;
+  const wn = morphWindows();
+  const ra = S.rise[0], rb = S.rise[1], CY = S.center_y;
+  if (t < wn.ba) {
+    let cy, vy, rot = 0, breathe = 1;
+    if (t < S.bounce_end) { [cy, vy] = bounceAt(t); }
+    else {
+      const settle = eic(seg(t, ra, rb));
+      cy = lerp(S.floor_y - S.ball_radius, CY, settle);
+      vy = 0;
+      [rot, , breathe] = life(t, ra);
+      cy += 14*Math.sin(2*Math.PI*0.45*(t-ra)) * seg(t, rb, rb+0.3);
+    }
+    let m = Math.min(eic(seg(t, wn.b1a, wn.b1b)) + eic(seg(t, wn.b2a, wn.b2b)), 2);
+    let sx = 1, sy = 1;
+    if (t < S.bounce_end + 0.05) {
+      const stretch = Math.min(Math.abs(vy)/4200, 0.30);
+      sy = 1 + stretch; sx = 1/Math.sqrt(sy);
+      for (const ti of impactTimes) {
+        const dti = t - ti;
+        if (dti >= 0 && dti < 0.30) {
+          const s = 0.38*Math.exp(-dti/0.085);
+          sy *= (1-s); sx *= Math.pow(1+s, 0.9);
+        }
+      }
+    } else {
+      const [px1, py1] = pulse(t, wn.b1b), [px2, py2] = pulse(t, wn.b2b);
+      sx = breathe*px1*px2; sy = breathe*py1*py2;
+    }
+    if (t < wn.b1a) {
+      const prox = clamp01(1 - (S.floor_y - S.ball_radius - cy)/900);
+      const sw = S.ball_radius*(0.8 + 1.5*prox)*Math.max(sx,1);
+      const g = ctx.createRadialGradient(cx, S.floor_y+26, 4, cx, S.floor_y+26, sw);
+      g.addColorStop(0, `rgba(0,0,0,${0.35*(0.25+0.75*prox)})`);
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.save(); ctx.translate(cx, S.floor_y+26); ctx.scale(1, 28/sw); ctx.translate(-cx, -(S.floor_y+26));
+      ctx.beginPath(); ctx.arc(cx, S.floor_y+26, sw, 0, 7); ctx.fill(); ctx.restore();
+    }
+    drawBlob(cx, cy, S.ball_radius, rot, m, col, sx, sy);
+    if (t < S.fade_in) {
+      ctx.fillStyle = `rgba(${bg[0]},${bg[1]},${bg[2]},${1 - eoc(t/S.fade_in)})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+  } else {
+    const out = seg(t, wn.ba, wn.bb);
+    const back = eic(seg(t, wn.ga, wn.gb));
+    const waveT = seg(t, wn.wa, wn.wb);
+    const lastM = 2*(1 - eic(seg(t, wn.ga, wn.gb)));
+    const central = 1 - eoc(out) + back;
+    const rot = -S.spin*(t - ra);
+    const bobY = 14*Math.sin(2*Math.PI*0.45*(t-ra));
+    if (central > 0.02) {
+      const breathe = 1 + 0.022*Math.sin(2*Math.PI*1.05*t);
+      drawBlob(cx, CY + bobY, S.ball_radius*Math.max(central,0)*breathe, rot, lastM, col, 1, 1);
+    }
+    for (let k = 0; k < S.dot_count; k++) {
+      const base = 2*Math.PI*k/S.dot_count;
+      const st = clamp01(out*1.25 - (k%6)*0.045);
+      const fly = eob(st);
+      const wamp = waveT > 0 && waveT < 1 ? Math.sin(Math.PI*clamp01(waveT)) : (waveT >= 1 ? 1 : 0);
+      const wave = 1 + 0.22*wamp*Math.sin(base*3 + t*3.2);
+      const swirl = 0.35*t + 0.25*Math.sin(t*0.9 + k);
+      const rad = S.orbit_radius*fly*(1-back)*wave;
+      const px = cx + rad*Math.cos(base+swirl);
+      const py = CY + rad*Math.sin(base+swirl)*0.92;
+      const pr = S.dot_radius*(0.6+0.4*fly)*(1-0.75*back);
+      if (pr > 1) {
+        ctx.beginPath(); ctx.arc(px, py, pr, 0, 7); ctx.fillStyle = col; ctx.fill();
+      }
+    }
+  }
+  if (t >= S.fade_out[0]) {
+    const f = eic(seg(t, S.fade_out[0], S.fade_out[1]));
+    ctx.fillStyle = `rgba(${bg[0]},${bg[1]},${bg[2]},${f})`;
+    ctx.fillRect(0, 0, W, H);
+  }
+  ctx.restore();
+}
+
+// ---------- playback ----------
+let t0 = performance.now();
+function tick(now) {
+  let t = ((now - t0)/1000) * S.speed;
+  if (S.loop) { t = t % (S.duration + 0.6); }
+  else if (t > S.duration) t = S.duration;
+  draw(Math.min(t, S.duration));
+  requestAnimationFrame(tick);
+}
+
+// ---------- controls ----------
+const FIELDS = {
+  speed:        { get: () => S.speed,        set: v => S.speed = v,        fmt: v => v.toFixed(2)+"x" },
+  ball_radius:  { get: () => S.ball_radius,  set: v => S.ball_radius = v,  fmt: v => v },
+  gravity:      { get: () => S.gravity,      set: v => S.gravity = v,      fmt: v => v },
+  restitution:  { get: () => S.restitution,  set: v => S.restitution = v,  fmt: v => v.toFixed(2) },
+  morph_len:    { get: () => S.morph_len,    set: v => S.morph_len = v,    fmt: v => v.toFixed(2)+"s" },
+  spin:         { get: () => S.spin,         set: v => S.spin = v,         fmt: v => v.toFixed(2) },
+  dot_count:    { get: () => S.dot_count,    set: v => S.dot_count = v,    fmt: v => v },
+  orbit_radius: { get: () => S.orbit_radius, set: v => S.orbit_radius = v, fmt: v => v },
+  background:   { get: () => S.background,   set: v => S.background = v },
+  color_start:  { get: () => S.color_start,  set: v => S.color_start = v },
+  color_end:    { get: () => S.color_end,    set: v => S.color_end = v },
+};
+function syncUI() {
+  for (const [id, f] of Object.entries(FIELDS)) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    el.value = f.get();
+    const out = document.getElementById(id + "_v");
+    if (out && f.fmt) out.textContent = f.fmt(f.get());
+  }
+  document.getElementById("loop").checked = S.loop;
+}
+for (const [id, f] of Object.entries(FIELDS)) {
+  const el = document.getElementById(id);
+  if (!el) continue;
+  el.addEventListener("input", () => {
+    f.set(el.type === "color" ? el.value : Number(el.value));
+    if (["gravity", "restitution", "ball_radius"].includes(id)) simulateBounce();
+    const out = document.getElementById(id + "_v");
+    if (out && f.fmt) out.textContent = f.fmt(f.get());
+  });
+}
+document.getElementById("loop").addEventListener("change", e => S.loop = e.target.checked);
+document.getElementById("replay").addEventListener("click", () => t0 = performance.now());
+document.getElementById("reset").addEventListener("click", () => {
+  S = structuredClone(DEFAULTS); simulateBounce(); syncUI(); t0 = performance.now();
+});
+document.getElementById("download").addEventListener("click", () => {
+  const out = {}; for (const k of Object.keys(DEFAULTS)) out[k] = S[k];
+  const blob = new Blob([JSON.stringify(out, null, 2)], {type: "application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = "fluid-shapes-settings.json"; a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+simulateBounce();
+syncUI();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
